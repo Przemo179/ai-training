@@ -52,13 +52,13 @@ const Home = () => {
         ) : (
           <>
             {messages.map((message: Message, index: number) => {
-              console.log('message', message)
+              console.log('messages', messages)
               if (message) {
                 const isBase64 = (str: string) => {
                   try {
                     return btoa(atob(str)) === str;
+                  // eslint-disable-next-line
                   } catch (err) {
-                    console.log('Error checking if base64', err);
                     return false;
                   }
                 };

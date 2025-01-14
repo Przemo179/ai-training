@@ -19,6 +19,7 @@
     "langchain": "^0.3.7",
     "next": "15.1.1",
     "openai": "^4.77.0",
+    "pdf-parse": "^1.1.1",
     "puppeteer": "^23.11.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -28,6 +29,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@types/node": "^20",
+    "@types/pdf-parse": "^1.1.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
