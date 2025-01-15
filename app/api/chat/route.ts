@@ -2,6 +2,7 @@ import { DataAPIClient } from '@datastax/astra-db-ts';
 import { openai } from '@ai-sdk/openai';
 import OpenAI from 'openai';
 import { streamText } from 'ai';
+import pdf from 'pdf-parse';
 
 const { ASTRA_DB_API_ENDPOINT,
   ASTRA_DB_APPLICATION_TOKEN,
@@ -9,7 +10,6 @@ const { ASTRA_DB_API_ENDPOINT,
   ASTRA_DB_COllECTION,
   OPENAI_API_KEY } =
   process.env;
-
 
 const client = new DataAPIClient(ASTRA_DB_APPLICATION_TOKEN);
 const db = client.db(ASTRA_DB_API_ENDPOINT!, { namespace: ASTRA_DB_NAMESPACE });
@@ -21,17 +21,29 @@ function decodeBase64(base64String) {
   return binaryData;
 }
 
-export async function POST(req: Request) {
+async function extractTextFromPDF(pdfBuffer) {
+  try {
+    const data = await pdf(pdfBuffer);
+    return data.text;
+  } catch (error) {
+    console.error('Error extracting text from PDF:', error);
+    return '';
+  }
+}
 
+export async function POST(req: Request) {
   let docContext = '';
-  
+
   try {
     const { messages, data } = await req.json();
 
     let newData;
+    let fileContent = '';
     if (data) {
       newData = decodeBase64(data);
+      fileContent = await extractTextFromPDF(newData);
     }
+
     const latestMessages = messages[messages.length - 1];
     const embedding = await new OpenAI({ apiKey: OPENAI_API_KEY }).embeddings.create({
       model: "text-embedding-3-small",
@@ -49,10 +61,12 @@ export async function POST(req: Request) {
         }
       );
 
-
       const documents = await cursor.toArray();
-      const docsMap = documents.map((doc) => doc.text.slice(0, 500))
-      docContext = JSON.stringify(docsMap);
+      const docsMap = documents.map((doc) => {
+        const sanitizedText = doc.text.replace(/[\r\n]+/g, ' ').slice(0, 500);
+        return sanitizedText;
+      });
+      docContext = JSON.stringify(docsMap, null, 2);
     } catch (error) {
       console.log('Error querying db', error);
     }
@@ -65,9 +79,9 @@ export async function POST(req: Request) {
         ${docContext}
         END CONTEXT
         ---------------
-        QUESTION: ${latestMessages}
+        QUESTION: ${latestMessages.content}
         ---------------
-        FILE CONTENT: ${newData ? newData.toString('utf-8') : ''}
+        FILE CONTENT: ${fileContent ? fileContent : newData ? newData.toString() : ''}
         ---------------
       `
     };
@@ -76,10 +90,11 @@ export async function POST(req: Request) {
       model: openai('gpt-3.5-turbo'),
       messages: [template, ...messages]
     });
+
+    newData = '';
     return result.toDataStreamResponse();
   } catch (error) {
     console.error('Error:', error);
     docContext = '';
   }
 }
-
