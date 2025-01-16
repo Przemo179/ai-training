@@ -3,6 +3,7 @@ import { openai } from '@ai-sdk/openai';
 import OpenAI from 'openai';
 import { streamText } from 'ai';
 import pdf from 'pdf-parse';
+import Tesseract from 'tesseract.js';
 
 const { ASTRA_DB_API_ENDPOINT,
   ASTRA_DB_APPLICATION_TOKEN,
@@ -11,6 +12,8 @@ const { ASTRA_DB_API_ENDPOINT,
   OPENAI_API_KEY } =
   process.env;
 
+
+const aiClient = new OpenAI({ apiKey: OPENAI_API_KEY })
 const client = new DataAPIClient(ASTRA_DB_APPLICATION_TOKEN);
 const db = client.db(ASTRA_DB_API_ENDPOINT!, { namespace: ASTRA_DB_NAMESPACE });
 const collection = db.collection(ASTRA_DB_COllECTION!);
@@ -31,6 +34,20 @@ async function extractTextFromPDF(pdfBuffer) {
   }
 }
 
+function isBase64Image(base64String) {
+  return base64String.startsWith('data:image/');
+}
+
+async function extractTextFromImage(imageBuffer) {
+  try {
+    const { data: { text } } = await Tesseract.recognize(imageBuffer, 'eng');
+    return text;
+  } catch (error) {
+    console.error('Error extracting text from image:', error);
+    return '';
+  }
+}
+
 export async function POST(req: Request) {
   let docContext = '';
 
@@ -39,19 +56,32 @@ export async function POST(req: Request) {
 
     let newData;
     let fileContent = '';
+
     if (data) {
       newData = decodeBase64(data);
-      fileContent = await extractTextFromPDF(newData);
+      console.log('newData', newData);
+      if (isBase64Image(data)) {
+        console.log('isBase64Image', isBase64Image(data));
+        fileContent = await extractTextFromImage(newData);
+      } else {
+        fileContent = await extractTextFromPDF(newData);
+      }
     }
 
+    console.log('1');
+
     const latestMessages = messages[messages.length - 1];
-    const embedding = await new OpenAI({ apiKey: OPENAI_API_KEY }).embeddings.create({
+    const embedding = await aiClient.embeddings.create({
       model: "text-embedding-3-small",
       input: latestMessages.content,
       encoding_format: "float"
     });
 
+    console.log('2');
+
     try {
+      console.log('3');
+
       const cursor = await collection.find({},
         {
           sort: {
@@ -68,9 +98,23 @@ export async function POST(req: Request) {
       });
       docContext = JSON.stringify(docsMap, null, 2);
     } catch (error) {
+      console.log('4');
+
       console.log('Error querying db', error);
     }
 
+    const fileContentsArray: string[] = [];
+
+    function addFileContent(newContent: string) {
+      const content = `[fileStart${fileContentsArray.length+1}] ${newContent} [fileEnd${fileContentsArray.length+1}]`;
+      fileContentsArray.push(content);
+    }
+
+    addFileContent(fileContent ? fileContent : newData ? newData.toString() : '');
+
+    const allFileContents = fileContentsArray.join('\n');
+
+    console.log('5');
     const template = {
       role: 'system',
       content: `
@@ -81,19 +125,22 @@ export async function POST(req: Request) {
         ---------------
         QUESTION: ${latestMessages.content}
         ---------------
-        FILE CONTENT: ${fileContent ? fileContent : newData ? newData.toString() : ''}
+        FILE CONTENT: ${allFileContents}
         ---------------
       `
     };
 
+    console.log('6');
     const result = await streamText({
-      model: openai('gpt-3.5-turbo'),
+      model: openai('gpt-4o'),
       messages: [template, ...messages]
     });
 
+    console.log('7');
     newData = '';
     return result.toDataStreamResponse();
   } catch (error) {
+    console.log('8');
     console.error('Error:', error);
     docContext = '';
   }
